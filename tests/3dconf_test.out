@@ -1,0 +1,113 @@
+Initial approximations:
+Scale =   0.99686
+Omega =   -0.0065 degrees
+Phi   =   -0.1460 degrees
+Kappa =    0.0053 degrees
+TX    =   219.656
+TY    =     3.424
+TZ    =     0.344
+
+
+
+Iteration: 1
+
+Param  Correction   New Value
+scale    -0.00012     0.99674
+omega      0.0604      0.0539
+  phi      0.0142     -0.1318
+kappa     -0.0056     -0.0002
+   Tx      -0.035     219.621
+   Ty       0.263       3.687
+   Tz      -0.404      -0.060
+
+
+
+Residuals:
+
+   Point    X res   Y res   Z res
+       a    0.002  -0.054   0.146
+       b   -0.076  -0.031  -0.598
+       c    0.071  -0.051   0.109
+       d    0.040  -0.103  -0.057
+       e   -0.077   0.219   0.642
+       f    0.040   0.019  -0.242
+
+
+Standard Error of Unit Weight: 0.29400
+
+
+Iteration: 2
+
+Param  Correction   New Value
+scale     0.00000     0.99674
+omega      0.0000      0.0540
+  phi     -0.0000     -0.1318
+kappa     -0.0000     -0.0002
+   Tx      -0.000     219.620
+   Ty      -0.000       3.687
+   Tz      -0.000      -0.060
+
+
+
+Residuals:
+
+   Point    X res   Y res   Z res
+       a    0.083  -0.385   0.112
+       b   -0.076   0.031  -0.441
+       c    0.044   0.030   0.030
+       d    0.017  -0.021  -0.112
+       e   -0.115   0.298   0.426
+       f    0.047   0.046  -0.016
+
+
+Standard Error of Unit Weight: 0.24755
+
+
+Iteration: 3
+
+Param  Correction   New Value
+scale     0.00000     0.99674
+omega      0.0000      0.0540
+  phi     -0.0000     -0.1318
+kappa     -0.0000     -0.0002
+   Tx      -0.000     219.620
+   Ty       0.000       3.687
+   Tz      -0.000      -0.060
+
+
+
+Residuals:
+
+   Point    X res   Y res   Z res
+       a    0.083  -0.385   0.112
+       b   -0.076   0.032  -0.441
+       c    0.044   0.031   0.030
+       d    0.017  -0.021  -0.112
+       e   -0.115   0.298   0.426
+       f    0.047   0.046  -0.016
+
+
+Standard Error of Unit Weight: 0.24755
+
+
+Final Results:
+
+Param       Value   Stan.Dev.
+scale     0.99674     0.00051
+omega      0.0540      0.0295
+  phi     -0.1318      0.0404
+kappa     -0.0002      0.0417
+   Tx     219.620       0.442
+   Ty       3.687       0.414
+   Tz      -0.060       0.420
+
+
+
+Transformed Points:
+
+   Point      X         Y        Z     SDev.X SDev.Y SDev.Z
+       1    827.919   500.595  470.725  0.266  0.246  0.237
+       2    854.835   326.217   87.096  0.204  0.215  0.207
+       3    790.878   403.805   85.836  0.156  0.166  0.162
+       4    864.319   376.355   85.261  0.187  0.211  0.204
+       5    751.191   287.683   88.276  0.200  0.176  0.172
