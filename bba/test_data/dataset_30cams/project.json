@@ -1,0 +1,6 @@
+{
+  "camera_file": "cameras.csv",
+  "obs_file": "observations.csv",
+  "point_file": "points.csv",
+  "project_name": "Mini_City_Block_30"
+}

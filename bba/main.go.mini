@@ -1,0 +1,349 @@
+package main
+
+import (
+	"fmt"
+	"math"
+)
+
+type Camera struct {
+	id                int
+	omega, phi, kappa float64
+	xl, yl, zl        float64
+	f                 float64
+	m                 [3][3]float64
+}
+
+type GroundPoint struct {
+	id      int
+	name    string
+	X, Y, Z float64
+	isFixed bool
+}
+
+type Observation struct {
+	camID int
+	ptID  int
+	x, y  float64
+}
+
+func main() {
+	fmt.Println("=== 核弹级算法: 光束法区域网平差 (BBA) [完美修复版] ===")
+
+	// 1. 初始化 3 台相机 (故意给出 5~10 米/度的初始误差，观察平差的威力)
+	// 真实值应为: Cam0(100,100,500), Cam1(200,100,500), Cam2(300,100,500)
+	cameras := []Camera{
+		{id: 0, f: 50.0, xl: 105, yl: 95, zl: 490, omega: 0.0, phi: 0.0, kappa: 0.0},
+		{id: 1, f: 50.0, xl: 195, yl: 105, zl: 510, omega: 0.0, phi: 0.0, kappa: 0.0},
+		{id: 2, f: 50.0, xl: 305, yl: 95, zl: 490, omega: 0.0, phi: 0.0, kappa: 0.0},
+	}
+
+	// 2. 初始化 5 个地面点 (3个固定控制点锚定空间，2个未知地物点猜测Z=0)
+	// 真实值应为: Unk_A Z=20, Unk_B Z=30
+	points := []GroundPoint{
+		{id: 0, name: "Unk_A ", X: 150, Y: 120, Z: 0, isFixed: false}, // 猜测Z=0
+		{id: 1, name: "Unk_B ", X: 250, Y: 80, Z: 0, isFixed: false},  // 猜测Z=0
+		{id: 2, name: "Ctrl_C", X: 100, Y: 150, Z: 50, isFixed: true}, // 控制点，锁定
+		{id: 3, name: "Ctrl_D", X: 300, Y: 50, Z: 60, isFixed: true},  // 控制点，锁定
+		{id: 4, name: "Ctrl_E", X: 200, Y: 200, Z: 40, isFixed: true}, // 第三控制点，彻底锁死网的自转
+	}
+
+	// 3. 注入完美的密集观测网 (3台相机 x 5个点 = 15条射线 = 30个严密方程式)
+	obs := []Observation{
+		{camID: 0, ptID: 0, x: 4.701512, y: 1.581090},
+		{camID: 0, ptID: 1, x: 15.415798, y: -2.620559},
+		{camID: 0, ptID: 2, x: -0.500017, y: 5.050180},
+		{camID: 0, ptID: 3, x: 22.153430, y: -6.161138},
+		{camID: 0, ptID: 4, x: 10.324115, y: 10.325172},
+		{camID: 1, ptID: 0, x: -4.646196, y: 3.176531},
+		{camID: 1, ptID: 1, x: 5.798175, y: -1.244027},
+		{camID: 1, ptID: 2, x: -10.481192, y: 6.766978},
+		{camID: 1, ptID: 3, x: 11.771060, y: -4.918309},
+		{camID: 1, ptID: 4, x: 0.738343, y: 11.909750},
+		{camID: 2, ptID: 0, x: -15.645052, y: 1.926982},
+		{camID: 2, ptID: 1, x: -5.297607, y: -2.180744},
+		{camID: 2, ptID: 2, x: -22.276666, y: 5.333059},
+		{camID: 2, ptID: 3, x: 0.056817, y: -5.681534},
+		{camID: 2, ptID: 4, x: -10.977716, y: 10.760328},
+	}
+
+	for i := range cameras {
+		calcRotation(&cameras[i])
+	}
+
+	var s0, s0old float64 = 1.0e30, 0
+	iter := 0
+	numCams := len(cameras)
+	numUnkPts := 2
+
+	fmt.Println("开始迭代...")
+	for iter < 10 {
+		iter++
+		s0old = s0
+
+		// 舒尔补的 4 个核心子块
+		N11 := newMat(6*numCams, 6*numCams)
+		N22 := newMat(3*numUnkPts, 3*numUnkPts)
+		N12 := newMat(6*numCams, 3*numUnkPts)
+		U1 := make([]float64, 6*numCams)
+		U2 := make([]float64, 3*numUnkPts)
+
+		sumResSq := 0.0
+
+		for _, ob := range obs {
+			camIdx, ptIdx := ob.camID, ob.ptID
+			cam := cameras[camIdx]
+			pt := points[ptIdx]
+
+			unkPtIdx := -1
+			if !pt.isFixed {
+				unkPtIdx = ptIdx
+			} // 因为这里刚好 Unk是0和1
+
+			epsX, epsY, A_cam, A_pt := calcPartials(cam, pt, ob.x, ob.y)
+			sumResSq += epsX*epsX + epsY*epsY
+
+			rowC := camIdx * 6
+			for r := 0; r < 6; r++ {
+				U1[rowC+r] += A_cam[0][r]*epsX + A_cam[1][r]*epsY
+				for c := 0; c < 6; c++ {
+					N11[rowC+r][rowC+c] += A_cam[0][r]*A_cam[0][c] + A_cam[1][r]*A_cam[1][c]
+				}
+			}
+
+			if unkPtIdx != -1 {
+				rowP := unkPtIdx * 3
+				for r := 0; r < 3; r++ {
+					U2[rowP+r] += A_pt[0][r]*epsX + A_pt[1][r]*epsY
+					for c := 0; c < 3; c++ {
+						N22[rowP+r][rowP+c] += A_pt[0][r]*A_pt[0][c] + A_pt[1][r]*A_pt[1][c]
+					}
+				}
+				for r := 0; r < 6; r++ {
+					for c := 0; c < 3; c++ {
+						N12[rowC+r][rowP+c] += A_cam[0][r]*A_pt[0][c] + A_cam[1][r]*A_pt[1][c]
+					}
+				}
+			}
+		}
+
+		s0 = math.Sqrt(sumResSq / float64(len(obs)*2-(6*numCams+3*numUnkPts)))
+		fmt.Printf("迭代 %2d: 整体网形单位权中误差 S0 = %.6f\n", iter, s0)
+
+		if math.Abs(s0old-s0)/s0 < 1e-6 {
+			break
+		}
+
+		// 【舒尔补魔法】将点坐标未知数从 24维 降维打击到仅解 18维 的相机方程
+		N22_inv := invertBlockDiagonal(N22, 3)
+		N12_x_N22inv := multiplyMat(N12, N22_inv)
+		N12T := transpose(N12)
+		SchurTermN := multiplyMat(N12_x_N22inv, N12T)
+		SchurTermU := multiplyMatVec(N12_x_N22inv, U2)
+
+		N_reduced := newMat(6*numCams, 6*numCams)
+		U_reduced := make([]float64, 6*numCams)
+		for r := 0; r < 6*numCams; r++ {
+			U_reduced[r] = U1[r] - SchurTermU[r]
+			for c := 0; c < 6*numCams; c++ {
+				N_reduced[r][c] = N11[r][c] - SchurTermN[r][c]
+			}
+		}
+
+		deltaCam := solveGaussian(N_reduced, U_reduced)
+
+		for i := 0; i < numCams; i++ {
+			cameras[i].omega += deltaCam[i*6+0]
+			cameras[i].phi += deltaCam[i*6+1]
+			cameras[i].kappa += deltaCam[i*6+2]
+			cameras[i].xl += deltaCam[i*6+3]
+			cameras[i].yl += deltaCam[i*6+4]
+			cameras[i].zl += deltaCam[i*6+5]
+			calcRotation(&cameras[i])
+		}
+
+		// 相机参数回代，光速求出地面点改正数
+		N12T_x_dCam := multiplyMatVec(N12T, deltaCam)
+		U2_minus := make([]float64, 3*numUnkPts)
+		for i := range U2 {
+			U2_minus[i] = U2[i] - N12T_x_dCam[i]
+		}
+		deltaPt := multiplyMatVec(N22_inv, U2_minus)
+
+		for i := range points {
+			if !points[i].isFixed {
+				points[i].X += deltaPt[i*3+0]
+				points[i].Y += deltaPt[i*3+1]
+				points[i].Z += deltaPt[i*3+2]
+			}
+		}
+	}
+
+	fmt.Println("\n=== 光束法区域网平差 最终重建结果 ===")
+	fmt.Println("【收敛后的相机姿态与坐标 (从巨大的初始误差中自动被网拉正!)】")
+	for _, c := range cameras {
+		fmt.Printf("Cam %d: XL=%7.2f, YL=%7.2f, ZL=%7.2f | Omega=%6.3f°, Phi=%6.3f°, Kappa=%6.3f°\n",
+			c.id, c.xl, c.yl, c.zl, c.omega*180/math.Pi, c.phi*180/math.Pi, c.kappa*180/math.Pi)
+	}
+
+	fmt.Println("\n【重建的高精度 3D 地形点】")
+	for _, p := range points {
+		if !p.isFixed {
+			fmt.Printf("%-6s (未知解算): X=%7.4f, Y=%7.4f, Z=%7.4f\n", p.name, p.X, p.Y, p.Z)
+		} else {
+			fmt.Printf("%-6s (绝对基准): X=%7.4f, Y=%7.4f, Z=%7.4f  <- [锁定不动]\n", p.name, p.X, p.Y, p.Z)
+		}
+	}
+}
+
+// ---- 下方为数学底层引擎 ----
+func calcPartials(cam Camera, pt GroundPoint, obs_x, obs_y float64) (float64, float64, [2][6]float64, [2][3]float64) {
+	dx, dy, dz := pt.X-cam.xl, pt.Y-cam.yl, pt.Z-cam.zl
+	r := cam.m[0][0]*dx + cam.m[0][1]*dy + cam.m[0][2]*dz
+	s := cam.m[1][0]*dx + cam.m[1][1]*dy + cam.m[1][2]*dz
+	q := cam.m[2][0]*dx + cam.m[2][1]*dy + cam.m[2][2]*dz
+
+	epsX := obs_x - (-cam.f * r / q)
+	epsY := obs_y - (-cam.f * s / q)
+
+	f_q2 := cam.f / (q * q)
+	so, co := math.Sin(cam.omega), math.Cos(cam.omega)
+	sp, cp := math.Sin(cam.phi), math.Cos(cam.phi)
+	sk, ck := math.Sin(cam.kappa), math.Cos(cam.kappa)
+
+	var Ac [2][6]float64
+	Ac[0][0] = f_q2 * (r*(-cam.m[2][2]*dy+cam.m[2][1]*dz) - q*(-cam.m[0][2]*dy+cam.m[0][1]*dz))
+	Ac[0][1] = f_q2 * (r*(cp*dx+so*sp*dy-co*sp*dz) - q*(-sp*ck*dx+so*cp*ck*dy-co*cp*ck*dz))
+	Ac[0][2] = -cam.f * s / q
+	Ac[0][3] = -cam.f * (r*cam.m[2][0] - q*cam.m[0][0]) / (q * q)
+	Ac[0][4] = -cam.f * (r*cam.m[2][1] - q*cam.m[0][1]) / (q * q)
+	Ac[0][5] = -cam.f * (r*cam.m[2][2] - q*cam.m[0][2]) / (q * q)
+
+	Ac[1][0] = f_q2 * (s*(-cam.m[2][2]*dy+cam.m[2][1]*dz) - q*(-cam.m[1][2]*dy+cam.m[1][1]*dz))
+	Ac[1][1] = f_q2 * (s*(cp*dx+so*sp*dy-co*sp*dz) - q*(sp*sk*dx-so*cp*sk*dy+co*cp*sk*dz))
+	Ac[1][2] = cam.f * r / q
+	Ac[1][3] = -cam.f * (s*cam.m[2][0] - q*cam.m[1][0]) / (q * q)
+	Ac[1][4] = -cam.f * (s*cam.m[2][1] - q*cam.m[1][1]) / (q * q)
+	Ac[1][5] = -cam.f * (s*cam.m[2][2] - q*cam.m[1][2]) / (q * q)
+
+	var Ap [2][3]float64
+	Ap[0][0], Ap[0][1], Ap[0][2] = -Ac[0][3], -Ac[0][4], -Ac[0][5]
+	Ap[1][0], Ap[1][1], Ap[1][2] = -Ac[1][3], -Ac[1][4], -Ac[1][5]
+	return epsX, epsY, Ac, Ap
+}
+
+func calcRotation(cam *Camera) {
+	so, co := math.Sin(cam.omega), math.Cos(cam.omega)
+	sp, cp := math.Sin(cam.phi), math.Cos(cam.phi)
+	sk, ck := math.Sin(cam.kappa), math.Cos(cam.kappa)
+	cam.m[0][0], cam.m[0][1], cam.m[0][2] = cp*ck, so*sp*ck+co*sk, -co*sp*ck+so*sk
+	cam.m[1][0], cam.m[1][1], cam.m[1][2] = -cp*sk, -so*sp*sk+co*ck, co*sp*sk+so*ck
+	cam.m[2][0], cam.m[2][1], cam.m[2][2] = sp, -so*cp, co*cp
+}
+
+func newMat(r, c int) [][]float64 {
+	m := make([][]float64, r)
+	for i := range m {
+		m[i] = make([]float64, c)
+	}
+	return m
+}
+
+func transpose(a [][]float64) [][]float64 {
+	out := newMat(len(a[0]), len(a))
+	for i := range a {
+		for j := range a[0] {
+			out[j][i] = a[i][j]
+		}
+	}
+	return out
+}
+
+func multiplyMat(a, b [][]float64) [][]float64 {
+	out := newMat(len(a), len(b[0]))
+	for i := range out {
+		for j := range out[0] {
+			for x := range a[0] {
+				out[i][j] += a[i][x] * b[x][j]
+			}
+		}
+	}
+	return out
+}
+
+func multiplyMatVec(a [][]float64, v []float64) []float64 {
+	out := make([]float64, len(a))
+	for i := range a {
+		for x := range a[0] {
+			out[i] += a[i][x] * v[x]
+		}
+	}
+	return out
+}
+
+func invertBlockDiagonal(mat [][]float64, bs int) [][]float64 {
+	n := len(mat)
+	inv := newMat(n, n)
+	for i := 0; i < n; i += bs {
+		b := newMat(bs, bs)
+		for r := 0; r < bs; r++ {
+			for c := 0; c < bs; c++ {
+				b[r][c] = mat[i+r][i+c]
+			}
+		}
+		binv := inverse3x3(b)
+		for r := 0; r < bs; r++ {
+			for c := 0; c < bs; c++ {
+				inv[i+r][i+c] = binv[r][c]
+			}
+		}
+	}
+	return inv
+}
+
+func inverse3x3(m [][]float64) [][]float64 {
+	det := m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1]) - m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0]) + m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0])
+	inv := newMat(3, 3)
+	inv[0][0] = (m[1][1]*m[2][2] - m[1][2]*m[2][1]) / det
+	inv[0][1] = (m[0][2]*m[2][1] - m[0][1]*m[2][2]) / det
+	inv[0][2] = (m[0][1]*m[1][2] - m[0][2]*m[1][1]) / det
+	inv[1][0] = (m[1][2]*m[2][0] - m[1][0]*m[2][2]) / det
+	inv[1][1] = (m[0][0]*m[2][2] - m[0][2]*m[2][0]) / det
+	inv[1][2] = (m[0][2]*m[1][0] - m[0][0]*m[1][2]) / det
+	inv[2][0] = (m[1][0]*m[2][1] - m[1][1]*m[2][0]) / det
+	inv[2][1] = (m[0][1]*m[2][0] - m[0][0]*m[2][1]) / det
+	inv[2][2] = (m[0][0]*m[1][1] - m[0][1]*m[1][0]) / det
+	return inv
+}
+
+func solveGaussian(A [][]float64, B []float64) []float64 {
+	n := len(B)
+	mat := newMat(n, n+1)
+	for i := 0; i < n; i++ {
+		copy(mat[i][:n], A[i])
+		mat[i][n] = B[i]
+	}
+	for i := 0; i < n; i++ {
+		max := i
+		for k := i + 1; k < n; k++ {
+			if math.Abs(mat[k][i]) > math.Abs(mat[max][i]) {
+				max = k
+			}
+		}
+		mat[i], mat[max] = mat[max], mat[i]
+		for j := i + 1; j < n; j++ {
+			f := mat[j][i] / mat[i][i]
+			for k := i; k <= n; k++ {
+				mat[j][k] -= f * mat[i][k]
+			}
+		}
+	}
+	x := make([]float64, n)
+	for i := n - 1; i >= 0; i-- {
+		sum := mat[i][n]
+		for j := i + 1; j < n; j++ {
+			sum -= mat[i][j] * x[j]
+		}
+		x[i] = sum / mat[i][i]
+	}
+	return x
+}
